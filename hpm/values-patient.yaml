@@ -1,65 +1,26 @@
-replicaCount: 1
-
 image:
-  repository: dockeritc778/patient-api
-  pullPolicy: IfNotPresent
+  repository: omagu/patient-api
   tag: latest
-
-imagePullSecrets: []
-
-nameOverride: ""
-fullnameOverride: ""
-
-serviceAccount:
-  create: true
-  automount: true
-  annotations: {}
-  name: ""
-
-podAnnotations: {}
-podLabels: {}
-
-podSecurityContext: {}
-
-securityContext: {}
+  pullPolicy: IfNotPresent
 
 service:
-  type: NodePort
-  port: 3000   # patient-api listens on port 3000
+  port: 3000
+  type: ClusterIP
 
 ingress:
   enabled: false
-  className: ""
-  annotations: {}
   hosts:
-    - host: chart-example.local
+    - host: hospital.local
       paths:
-        - path: /
-          pathType: ImplementationSpecific
-  tls: []
+        - path: /patient
+          pathType: Prefix
 
-resources: {}
-
-livenessProbe:
-  httpGet:
-    path: /
-    port: http
-readinessProbe:
-  httpGet:
-    path: /
-    port: http
+serviceAccount:
+  create: true
+  name: "hospital-patient-sa"
 
 autoscaling:
   enabled: false
   minReplicas: 1
-  maxReplicas: 100
+  maxReplicas: 1
   targetCPUUtilizationPercentage: 80
-
-volumes: []
-volumeMounts: []
-
-nodeSelector: {}
-
-tolerations: []
-
-affinity: {}

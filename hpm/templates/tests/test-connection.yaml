@@ -7,9 +7,11 @@ metadata:
   annotations:
     "helm.sh/hook": test
 spec:
+  restartPolicy: Never
   containers:
     - name: wget
       image: busybox
       command: ['wget']
-      args: ['{{ include "hpm.fullname" . }}:{{ .Values.service.port }}']
-  restartPolicy: Never
+      args:
+        # Test the service defined in the values file
+        - "{{ include "hpm.fullname" . }}:{{ .Values.service.port }}"
