@@ -1,0 +1,310 @@
+trigger:
+  - main
+
+variables:
+  - group: buildvargrp  # Use your variable group that contains your Docker-related variables
+  - name: IMAGE_TAG
+    value: $(Build.BuildId)
+
+pool:
+  name: emmaselfhosted  # Name of your self-hosted agent pool
+
+stages:
+
+# ===============================
+# Stage 1: Checkout Code
+# ===============================
+- stage: Checkout
+  displayName: Checkout Code
+  jobs:
+  - job: Checkout
+    steps:
+    - checkout: self
+      clean: true  # Clean the repository before checkout
+
+# ===============================
+# Stage 2: Build & Push Docker Images
+# ===============================
+- stage: BuildAndPush
+  displayName: Build & Push Docker Images
+  dependsOn: Checkout
+  jobs:
+  - job: DockerBuild
+    displayName: Docker Build & Push
+    steps:
+
+      # ---- Docker Login (Docker Hub) ----
+      - task: CmdLine@2
+        displayName: Docker Login (Docker Hub)
+        inputs:
+          script: |
+            echo $(DOCKER_PASSWORD) | docker login -u $(DOCKER_USERNAME) --password-stdin
+
+      # ---- Docker Build & Push hospital-ui ----
+      - task: Docker@2
+        displayName: Build and Push hospital-ui Image
+        inputs:
+          command: buildAndPush
+          repository: $(DOCKER_USERNAME)/hospital-ui
+          dockerfile: hospital-frontend/Dockerfile
+          buildContext: hospital-frontend   # all files (nginx.conf, package.json, src) are here
+          tags: |
+            $(IMAGE_TAG)
+            latest
+
+      # ---- Docker Build & Push patient-api ----
+      - task: Docker@2
+        displayName: Build and Push patient-api Image
+        inputs:
+          command: buildAndPush
+          repository: $(DOCKER_USERNAME)/patient-api
+          dockerfile: patient-api/Dockerfile
+          buildContext: patient-api   # all patient-api files should be inside this folder
+          tags: |
+            $(IMAGE_TAG)
+            latest
+
+      # ---- Docker Build & Push appointment-api ----
+      - task: Docker@2
+        displayName: Build and Push appointment-api Image
+        inputs:
+          command: buildAndPush
+          repository: $(DOCKER_USERNAME)/appointment-api
+          dockerfile: appointment-api/Dockerfile
+          buildContext: appointment-api   # all appointment-api files should be inside this folder
+          tags: |
+            $(IMAGE_TAG)
+            latest
+
+# ===============================
+# Stage 3: Azure Authentication & AKS
+# ===============================
+- stage: AzureLoginAndAKS
+  displayName: Azure Login and AKS Credentials
+  dependsOn: BuildAndPush
+  jobs:
+  - job: AzureLogin
+    displayName: Azure Login
+    steps:
+
+      # ---- Azure CLI Login using Service Principal (Service Connection) ----
+      - task: CmdLine@2
+        displayName: Azure CLI Login (Service Principal)
+        inputs:
+          script: |
+            az login --service-principal -u $(AZURE_CLIENT_ID) -p $(AZURE_CLIENT_SECRET) --tenant $(AZURE_TENANT_ID)
+            az account set --subscription $(AZURE_SUBSCRIPTION_ID)
+
+      # ---- Get AKS Credentials ----
+      - task: CmdLine@2
+        displayName: Get AKS Credentials
+        inputs:
+          script: |
+            az aks get-credentials --resource-group $(AKS_RESOURCE_GROUP) --name $(AKS_CLUSTER_NAME) --overwrite-existing
+
+# ===============================
+# Stage 4: Helm Deployment (Windows Agent)
+# ===============================
+- stage: HelmDeployment
+  displayName: Helm Deployment
+  dependsOn: BuildAndPush
+  jobs:
+  - job: HelmDeploy
+    displayName: Helm Deployment
+    steps:
+
+      # ---- Install Helm ----
+      - task: PowerShell@2
+        displayName: Install Helm
+        inputs:
+          targetType: inline
+          script: |
+            Write-Host "Downloading Helm..."
+            
+            # Define paths for Helm installation
+            $helmZipPath = "$env:TEMP\helm.zip"
+            $helmExtractPath = "$env:TEMP\helm"
+            
+            # Clean up any existing Helm installation directory
+            if (Test-Path $helmExtractPath) {
+                Remove-Item -Recurse -Force $helmExtractPath
+            }
+
+            # Download Helm zip file
+            Invoke-WebRequest -Uri https://get.helm.sh/helm-v3.12.3-windows-amd64.zip -OutFile $helmZipPath
+
+            # Extract Helm archive with the -Force flag to overwrite any existing files
+            Expand-Archive -Path $helmZipPath -DestinationPath $helmExtractPath -Force
+
+            # Add Helm to the system PATH (temporary for this session)
+            $env:Path += ";$helmExtractPath\windows-amd64"
+
+            # Verify Helm installation
+            helm version
+
+      # ---- Render Helm Template with UI Values ----
+      - task: CmdLine@2
+        displayName: Helm Template - Render Hospital UI
+        inputs:
+          script: |
+            "%TEMP%\helm\windows-amd64\helm.exe" template hospital-ui ./hpm --set image.repository=omagu/hospital-ui --set image.tag=$(IMAGE_TAG) --values ./hpm/values-ui.yaml --debug
+
+      # ---- Render Helm Template with Patient API Values ----
+      - task: CmdLine@2
+        displayName: Helm Template - Render Patient API
+        inputs:
+          script: |
+            "%TEMP%\helm\windows-amd64\helm.exe" template patient-api ./hpm --set image.repository=omagu/patient-api --set image.tag=$(IMAGE_TAG) --values ./hpm/values-patient.yaml --debug
+
+      # ---- Render Helm Template with Appointment API Values ----
+      - task: CmdLine@2
+        displayName: Helm Template - Render Appointment API
+        inputs:
+          script: |
+            "%TEMP%\helm\windows-amd64\helm.exe" template appointment-api ./hpm --set image.repository=omagu/appointment-api --set image.tag=$(IMAGE_TAG) --values ./hpm/values-appointment.yaml --debug
+
+# ===============================
+# Stage 5: Deploy to AKS - Dev
+# ===============================
+- stage: DeployToDev
+  displayName: Deploy to AKS Dev
+  dependsOn: HelmDeployment
+  jobs:
+  - job: AKSDev
+    displayName: Deploy to Dev
+    steps:
+    - task: CmdLine@2
+      displayName: AKS Dev Deployment
+      inputs:
+        script: |
+          az login --service-principal ^
+            -u $(AZURE_CLIENT_ID) ^
+            -p $(AZURE_CLIENT_SECRET) ^
+            --tenant $(AZURE_TENANT_ID)
+ 
+          az account set --subscription $(AZURE_SUBSCRIPTION_ID)
+ 
+          az aks get-credentials ^
+            --resource-group $(AKS_RESOURCE_GROUP) ^
+            --name $(AKS_CLUSTER_NAME) ^
+            --overwrite-existing
+ 
+          helm dependency update .\hpm
+ 
+          # Deploy hospital-ui
+          helm upgrade --install hospital-ui ./hpm ^
+            --namespace $(NAMESPACE_DEV) ^
+            --create-namespace ^
+            --set image.repository=omagu/hospital-ui ^
+            --set image.tag=$(IMAGE_TAG) ^
+            --atomic --wait
+ 
+          # Deploy patient-api
+          helm upgrade --install patient-api ./hpm ^
+            --namespace $(NAMESPACE_DEV) ^
+            --create-namespace ^
+            --set image.repository=omagu/patient-api ^
+            --set image.tag=$(IMAGE_TAG) ^
+            --atomic --wait
+ 
+          # Deploy appointment-api
+          helm upgrade --install appointment-api ./hpm ^
+            --namespace $(NAMESPACE_DEV) ^
+            --create-namespace ^
+            --set image.repository=omagu/appointment-api ^
+            --set image.tag=$(IMAGE_TAG) ^
+            --atomic --wait
+ 
+          # Verify deployments
+          echo "================ FRONTEND SERVICE (DEV) ================"
+          kubectl get svc hospital-ui -n $(NAMESPACE_DEV)
+          echo "Frontend Public IP (DEV):"
+          kubectl get svc hospital-ui -n $(NAMESPACE_DEV) -o jsonpath="{.status.loadBalancer.ingress[0].ip}"
+          
+          echo "================ PATIENT API SERVICE (DEV) ================"
+          kubectl get svc patient-api -n $(NAMESPACE_DEV)
+          echo "Patient API Public IP (DEV):"
+          kubectl get svc patient-api -n $(NAMESPACE_DEV) -o jsonpath="{.status.loadBalancer.ingress[0].ip}"
+
+          echo "================ APPOINTMENT API SERVICE (DEV) ================"
+          kubectl get svc appointment-api -n $(NAMESPACE_DEV)
+          echo "Appointment API Public IP (DEV):"
+          kubectl get svc appointment-api -n $(NAMESPACE_DEV) -o jsonpath="{.status.loadBalancer.ingress[0].ip}"
+
+          echo ""
+          echo "========================================================"
+ 
+          az logout
+
+# ===============================
+# Stage 6: Deploy to AKS - Prod
+# ===============================
+- stage: DeployToProd
+  displayName: Deploy to AKS Prod
+  dependsOn: DeployToDev
+  jobs:
+  - job: AKSProd
+    displayName: Deploy to Prod
+    steps:
+    - task: CmdLine@2
+      displayName: AKS Prod Deployment
+      inputs:
+        script: |
+          az login --service-principal ^
+            -u $(AZURE_CLIENT_ID) ^
+            -p $(AZURE_CLIENT_SECRET) ^
+            --tenant $(AZURE_TENANT_ID)
+ 
+          az account set --subscription $(AZURE_SUBSCRIPTION_ID)
+ 
+          az aks get-credentials ^
+            --resource-group $(AKS_RESOURCE_GROUP) ^
+            --name $(AKS_CLUSTER_NAME) ^
+            --overwrite-existing
+ 
+          helm dependency update .\hpm
+ 
+          # Deploy hospital-ui
+          helm upgrade --install hospital-ui ./hpm ^
+            --namespace $(NAMESPACE_PROD) ^
+            --create-namespace ^
+            --set image.repository=omagu/hospital-ui ^
+            --set image.tag=$(IMAGE_TAG) ^
+            --atomic --wait
+ 
+          # Deploy patient-api
+          helm upgrade --install patient-api ./hpm ^
+            --namespace $(NAMESPACE_PROD) ^
+            --create-namespace ^
+            --set image.repository=omagu/patient-api ^
+            --set image.tag=$(IMAGE_TAG) ^
+            --atomic --wait
+ 
+          # Deploy appointment-api
+          helm upgrade --install appointment-api ./hpm ^
+            --namespace $(NAMESPACE_PROD) ^
+            --create-namespace ^
+            --set image.repository=omagu/appointment-api ^
+            --set image.tag=$(IMAGE_TAG) ^
+            --atomic --wait
+ 
+          # Verify deployments
+          echo "================ FRONTEND SERVICE (PROD) ================"
+          kubectl get svc hospital-ui -n $(NAMESPACE_PROD)
+          echo "Frontend Public IP (PROD):"
+          kubectl get svc hospital-ui -n $(NAMESPACE_PROD) -o jsonpath="{.status.loadBalancer.ingress[0].ip}"
+          
+          echo "================ PATIENT API SERVICE (PROD) ================"
+          kubectl get svc patient-api -n $(NAMESPACE_PROD)
+          echo "Patient API Public IP (PROD):"
+          kubectl get svc patient-api -n $(NAMESPACE_PROD) -o jsonpath="{.status.loadBalancer.ingress[0].ip}"
+
+          echo "================ APPOINTMENT API SERVICE (PROD) ================"
+          kubectl get svc appointment-api -n $(NAMESPACE_PROD)
+          echo "Appointment API Public IP (PROD):"
+          kubectl get svc appointment-api -n $(NAMESPACE_PROD) -o jsonpath="{.status.loadBalancer.ingress[0].ip}"
+
+          echo ""
+          echo "========================================================"
+ 
+          az logout
