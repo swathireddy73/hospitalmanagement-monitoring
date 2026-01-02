@@ -10,6 +10,9 @@ service:
 env:
   DB_SERVER: hospital-ui-hpm-sqlserver
 
+sqlserver:
+  enabled: false
+
 ingress:
   enabled: false
   hosts:
