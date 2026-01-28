@@ -24,7 +24,6 @@ pipeline {
         // ========================
         stage('Build & Push Docker Images') {
             steps {
-                // Use your working style credentials here
                 withCredentials([usernamePassword(credentialsId: 'sathish33', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     script {
                         def images = [
@@ -53,11 +52,12 @@ pipeline {
         stage('GCP Login & GKE Config') {
             steps {
                 withCredentials([file(credentialsId: 'GCP_SERVICE_ACCOUNT_KEY', variable: 'GCP_KEY_FILE')]) {
-                    // Authenticate using the withGCP step
-                    withGCP(credentialsId: 'GCP_SERVICE_ACCOUNT_KEY', projectId: "${GCP_PROJECT_ID}") {
+                    script {
                         sh """
-                            echo "Authenticating to GCP and setting GKE context"
-                            gcloud container clusters get-credentials ${GKE_CLUSTER_NAME} --region ${GKE_REGION}
+                            echo "Authenticating to GCP..."
+                            gcloud auth activate-service-account --key-file=$GCP_KEY_FILE
+                            gcloud config set project $GCP_PROJECT_ID
+                            gcloud container clusters get-credentials $GKE_CLUSTER_NAME --region $GKE_REGION
                         """
                     }
                 }
