@@ -62,7 +62,7 @@ pipeline {
             }
         }
 
-        stage('GCP Login & Enable APIs') {
+        stage('GCP Login & GKE Config') {
             steps {
                 withCredentials([
                     file(credentialsId: 'GCP_SERVICE_ACCOUNT_KEY', variable: 'GCP_KEY_FILE')
@@ -70,17 +70,14 @@ pipeline {
                     sh '''
                         echo "Activating GCP service account..."
                         gcloud auth activate-service-account --key-file="$GCP_KEY_FILE"
+
+                        echo "Checking active account and project..."
+                        gcloud auth list
                         gcloud config set project $GCP_PROJECT_ID
+                        gcloud config list project
 
-                        echo "Enabling required APIs..."
-                        gcloud services enable cloudresourcemanager.googleapis.com \
-                                              container.googleapis.com \
-                                              --project $GCP_PROJECT_ID
-
-                        echo "Fetching GKE cluster credentials..."
+                        echo "Fetching GKE credentials..."
                         gcloud container clusters get-credentials $GKE_CLUSTER_NAME --region $GKE_REGION
-
-                        echo "Verifying access..."
                         kubectl get nodes
                     '''
                 }
@@ -97,10 +94,10 @@ pipeline {
                     )
                 ]) {
                     sh '''
-                        echo "Creating namespace..."
+                        # Create namespace if it doesn't exist
                         kubectl create namespace hospital --dry-run=client -o yaml | kubectl apply -f -
 
-                        echo "Creating Docker registry secret..."
+                        # Create Docker registry secret
                         kubectl create secret docker-registry dockerhub-secret \
                           --docker-server=index.docker.io \
                           --docker-username=$DOCKER_USER \
@@ -108,24 +105,22 @@ pipeline {
                           --namespace hospital \
                           --dry-run=client -o yaml | kubectl apply -f -
 
-                        echo "Deploying MySQL..."
+                        # Deploy MySQL
                         kubectl apply -f k8s/mysql/mysql-deployment.yaml
 
-                        echo "Deploying UI..."
+                        # Deploy applications using Helm
                         helm upgrade --install ui ./hpm \
                           --namespace hospital \
                           -f hpm/values-ui.yaml \
                           --set image.tag=$BUILD_ID \
                           --set imagePullSecrets[0].name=dockerhub-secret
 
-                        echo "Deploying Patient API..."
                         helm upgrade --install patient-api ./hpm \
                           --namespace hospital \
                           -f hpm/values-patient_api.yaml \
                           --set image.tag=$BUILD_ID \
                           --set imagePullSecrets[0].name=dockerhub-secret
 
-                        echo "Deploying Appointment API..."
                         helm upgrade --install appointment-api ./hpm \
                           --namespace hospital \
                           -f hpm/values-appointment_api.yaml \
