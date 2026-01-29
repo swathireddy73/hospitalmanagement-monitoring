@@ -18,6 +18,12 @@ pipeline {
         }
 
         stage('Build & Push Docker Images') {
+            agent {
+                docker {
+                    image 'docker:24'
+                    args '-v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -27,7 +33,7 @@ pipeline {
                     )
                 ]) {
                     script {
-                        sh 'echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin'
+                        sh 'echo "$DOCKER_PASS" | env -u DOCKER_API_VERSION /usr/local/bin/docker login -u "$DOCKER_USER" --password-stdin'
 
                         def images = [
                             [dir: 'frontend-api',    name: 'sathish33/frontend_api_image'],
@@ -37,8 +43,8 @@ pipeline {
 
                         images.each {
                             sh """
-                                docker build -t ${it.name}:${BUILD_ID} ${it.dir}
-                                docker push ${it.name}:${BUILD_ID}
+                                env -u DOCKER_API_VERSION /usr/local/bin/docker build -t ${it.name}:${BUILD_ID} ${it.dir}
+                                env -u DOCKER_API_VERSION /usr/local/bin/docker push ${it.name}:${BUILD_ID}
                             """
                         }
                     }
@@ -135,7 +141,7 @@ pipeline {
     post {
         always {
             echo 'Cleaning up Docker cache'
-            sh 'docker system prune -f'
+            sh 'env -u DOCKER_API_VERSION /usr/local/bin/docker system prune -f'
         }
     }
 }
