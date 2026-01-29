@@ -18,12 +18,6 @@ pipeline {
         }
 
         stage('Build & Push Docker Images') {
-            agent {
-                docker {
-                    image 'docker:24'
-                    args '-v /var/run/docker.sock:/var/run/docker.sock'
-                }
-            }
             steps {
                 withCredentials([
                     usernamePassword(
