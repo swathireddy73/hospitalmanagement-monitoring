@@ -62,15 +62,26 @@ pipeline {
             }
         }
 
-        stage('GCP Login & GKE Config') {
+        stage('GCP Login & Enable APIs') {
             steps {
                 withCredentials([
                     file(credentialsId: 'GCP_SERVICE_ACCOUNT_KEY', variable: 'GCP_KEY_FILE')
                 ]) {
                     sh '''
+                        echo "Activating GCP service account..."
                         gcloud auth activate-service-account --key-file="$GCP_KEY_FILE"
                         gcloud config set project $GCP_PROJECT_ID
+
+                        echo "Enabling required APIs..."
+                        gcloud services enable cloudresourcemanager.googleapis.com \
+                                              container.googleapis.com \
+                                              --project $GCP_PROJECT_ID
+
+                        echo "Fetching GKE cluster credentials..."
                         gcloud container clusters get-credentials $GKE_CLUSTER_NAME --region $GKE_REGION
+
+                        echo "Verifying access..."
+                        kubectl get nodes
                     '''
                 }
             }
@@ -86,8 +97,10 @@ pipeline {
                     )
                 ]) {
                     sh '''
+                        echo "Creating namespace..."
                         kubectl create namespace hospital --dry-run=client -o yaml | kubectl apply -f -
 
+                        echo "Creating Docker registry secret..."
                         kubectl create secret docker-registry dockerhub-secret \
                           --docker-server=index.docker.io \
                           --docker-username=$DOCKER_USER \
@@ -95,20 +108,24 @@ pipeline {
                           --namespace hospital \
                           --dry-run=client -o yaml | kubectl apply -f -
 
+                        echo "Deploying MySQL..."
                         kubectl apply -f k8s/mysql/mysql-deployment.yaml
 
+                        echo "Deploying UI..."
                         helm upgrade --install ui ./hpm \
                           --namespace hospital \
                           -f hpm/values-ui.yaml \
                           --set image.tag=$BUILD_ID \
                           --set imagePullSecrets[0].name=dockerhub-secret
 
+                        echo "Deploying Patient API..."
                         helm upgrade --install patient-api ./hpm \
                           --namespace hospital \
                           -f hpm/values-patient_api.yaml \
                           --set image.tag=$BUILD_ID \
                           --set imagePullSecrets[0].name=dockerhub-secret
 
+                        echo "Deploying Appointment API..."
                         helm upgrade --install appointment-api ./hpm \
                           --namespace hospital \
                           -f hpm/values-appointment_api.yaml \
