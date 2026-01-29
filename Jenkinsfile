@@ -2,14 +2,11 @@ pipeline {
     agent any
 
     environment {
-        // Project / Cluster
-        GCP_PROJECT        = 'hospital-project'
-        GKE_CLUSTER_NAME   = 'cluster-1'
-        GKE_ZONE           = 'us-central1-a'
-
-        // Docker
-        DOCKER_USER        = 'sathish33'
-        IMAGE_TAG          = '17'
+        GCP_PROJECT_ID   = 'hospital-project'
+        GKE_CLUSTER_NAME = 'cluster-1'
+        GKE_REGION       = 'us-central1-a'
+        GCLOUD_HOME      = "${WORKSPACE}/gcloud"
+        PATH             = "${WORKSPACE}/gcloud/google-cloud-sdk/bin:${env.PATH}"
     }
 
     stages {
@@ -23,31 +20,39 @@ pipeline {
         stage('Build & Push Docker Images') {
             steps {
                 withCredentials([
-                    string(credentialsId: 'sathish33', variable: 'DOCKER_PASS')
+                    usernamePassword(
+                        credentialsId: 'sathish33',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
                 ]) {
-                    sh '''
-                        echo "$DOCKER_PASS" | docker login -u $DOCKER_USER --password-stdin
+                    script {
+                        sh 'echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin'
 
-                        docker build -t $DOCKER_USER/frontend_api_image:$IMAGE_TAG frontend-api
-                        docker push $DOCKER_USER/frontend_api_image:$IMAGE_TAG
+                        def images = [
+                            [dir: 'frontend-api',    name: 'sathish33/frontend_api_image'],
+                            [dir: 'patient-api',     name: 'sathish33/patient_api_image'],
+                            [dir: 'appointment-api', name: 'sathish33/appointment_api_image']
+                        ]
 
-                        docker build -t $DOCKER_USER/patient_api_image:$IMAGE_TAG patient-api
-                        docker push $DOCKER_USER/patient_api_image:$IMAGE_TAG
-
-                        docker build -t $DOCKER_USER/appointment_api_image:$IMAGE_TAG appointment-api
-                        docker push $DOCKER_USER/appointment_api_image:$IMAGE_TAG
-                    '''
+                        images.each {
+                            sh """
+                                docker build -t ${it.name}:${BUILD_ID} ${it.dir}
+                                docker push ${it.name}:${BUILD_ID}
+                            """
+                        }
+                    }
                 }
             }
         }
 
-        stage('Install gcloud CLI (if needed)') {
+        stage('Install gcloud CLI (no sudo)') {
             steps {
                 sh '''
-                    if ! command -v gcloud &> /dev/null; then
-                        echo "Installing gcloud..."
-                        curl -sSL https://sdk.cloud.google.com | bash
-                        source $HOME/google-cloud-sdk/path.bash.inc
+                    if [ ! -d "$GCLOUD_HOME/google-cloud-sdk" ]; then
+                        echo "Installing gcloud locally..."
+                        mkdir -p $GCLOUD_HOME
+                        curl -sSL https://sdk.cloud.google.com | bash -s -- --disable-prompts --install-dir=$GCLOUD_HOME
                     else
                         echo "gcloud already installed"
                     fi
@@ -57,22 +62,26 @@ pipeline {
             }
         }
 
-        stage('GCP Login & GKE Config') {
+        stage('GCP Login & Enable APIs') {
             steps {
                 withCredentials([
                     file(credentialsId: 'GCP_SERVICE_ACCOUNT_KEY', variable: 'GCP_KEY_FILE')
                 ]) {
                     sh '''
-                        echo "Authenticating to GCP..."
-                        gcloud auth revoke --all || true
+                        echo "Activating GCP service account..."
                         gcloud auth activate-service-account --key-file="$GCP_KEY_FILE"
+                        gcloud config set project $GCP_PROJECT_ID
 
-                        gcloud config set project $GCP_PROJECT
+                        echo "Enabling required APIs..."
+                        gcloud services enable cloudresourcemanager.googleapis.com \
+                                              container.googleapis.com \
+                                              --project $GCP_PROJECT_ID
 
-                        echo "Fetching GKE credentials..."
-                        gcloud container clusters get-credentials $GKE_CLUSTER_NAME \
-                          --zone $GKE_ZONE \
-                          --project $GCP_PROJECT
+                        echo "Fetching GKE cluster credentials..."
+                        gcloud container clusters get-credentials $GKE_CLUSTER_NAME --region $GKE_REGION
+
+                        echo "Verifying access..."
+                        kubectl get nodes
                     '''
                 }
             }
@@ -80,20 +89,58 @@ pipeline {
 
         stage('Deploy to GKE') {
             steps {
-                sh '''
-                    kubectl version --client
-                    kubectl get nodes
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'sathish33',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    sh '''
+                        echo "Creating namespace..."
+                        kubectl create namespace hospital --dry-run=client -o yaml | kubectl apply -f -
 
-                    kubectl apply -f k8s/
-                '''
+                        echo "Creating Docker registry secret..."
+                        kubectl create secret docker-registry dockerhub-secret \
+                          --docker-server=index.docker.io \
+                          --docker-username=$DOCKER_USER \
+                          --docker-password=$DOCKER_PASS \
+                          --namespace hospital \
+                          --dry-run=client -o yaml | kubectl apply -f -
+
+                        echo "Deploying MySQL..."
+                        kubectl apply -f k8s/mysql/mysql-deployment.yaml
+
+                        echo "Deploying UI..."
+                        helm upgrade --install ui ./hpm \
+                          --namespace hospital \
+                          -f hpm/values-ui.yaml \
+                          --set image.tag=$BUILD_ID \
+                          --set imagePullSecrets[0].name=dockerhub-secret
+
+                        echo "Deploying Patient API..."
+                        helm upgrade --install patient-api ./hpm \
+                          --namespace hospital \
+                          -f hpm/values-patient_api.yaml \
+                          --set image.tag=$BUILD_ID \
+                          --set imagePullSecrets[0].name=dockerhub-secret
+
+                        echo "Deploying Appointment API..."
+                        helm upgrade --install appointment-api ./hpm \
+                          --namespace hospital \
+                          -f hpm/values-appointment_api.yaml \
+                          --set image.tag=$BUILD_ID \
+                          --set imagePullSecrets[0].name=dockerhub-secret
+                    '''
+                }
             }
         }
     }
 
     post {
         always {
-            echo "Cleaning up Docker cache"
-            sh 'docker system prune -f || true'
+            echo 'Cleaning up Docker cache'
+            sh 'docker system prune -f'
         }
     }
 }
