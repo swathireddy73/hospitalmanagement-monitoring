@@ -12,6 +12,20 @@ pipeline {
 
     stages {
 
+        stage('Setup gcloud PATH (Bulletproof)') {
+            steps {
+                sh '''
+                    export PATH=/home/swathireddy73/google-cloud-sdk/bin:$PATH
+                    export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+
+                    echo "✅ Verifying gcloud & GKE auth plugin"
+                    gcloud version
+                    gke-gcloud-auth-plugin --version
+                    kubectl version --client
+                '''
+            }
+        }
+
         stage('Checkout Code') {
             steps {
                 checkout scm
@@ -92,7 +106,9 @@ pipeline {
                     file(credentialsId: 'GCP_SERVICE_ACCOUNT_KEY', variable: 'GCP_KEY_FILE')
                 ]) {
                     sh '''
-                        gcloud version
+                        export PATH=/home/swathireddy73/google-cloud-sdk/bin:$PATH
+                        export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+
                         gcloud auth activate-service-account --key-file="$GCP_KEY_FILE"
                         gcloud config set project $GCP_PROJECT_ID
                         gcloud container clusters get-credentials $GKE_CLUSTER_NAME --zone $GKE_REGION
