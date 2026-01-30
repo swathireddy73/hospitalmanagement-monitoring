@@ -29,9 +29,10 @@ pipeline {
                             echo "Running SonarQube analysis..."
                             ${scannerHome}/bin/sonar-scanner \
                                 -Dsonar.projectKey=hospital-project \
-                                -Dsonar.sources=. \
+                                -Dsonar.sources=frontend-api,patient-api,appointment-api \
+                                -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**,**/*.min.js,**/*.spec.ts,**/e2e/**,**/.scannerwork/** \
                                 -Dsonar.host.url=http://20.75.196.235:9000 \
-                                -Dsonar.login=$SONAR_AUTH_TOKEN
+                                -Dsonar.token=$SONAR_AUTH_TOKEN
                         """
                     }
                 }
