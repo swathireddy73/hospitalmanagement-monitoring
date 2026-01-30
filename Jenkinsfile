@@ -18,38 +18,33 @@ pipeline {
         }
 
         stage('SonarQube Analysis') {
-    steps {
-        script {
-            // Use the SonarScanner installed in Jenkins
-            def scannerHome = tool 'SonarScanner'
+            steps {
+                script {
+                    // Use the SonarScanner installed in Jenkins
+                    def scannerHome = tool 'SonarScanner'
 
-            // Inject SonarQube environment variables
-            withSonarQubeEnv('SonarQube') {
-                sh """
-                    echo "Running SonarQube analysis..."
-                    ${scannerHome}/bin/sonar-scanner \
-                        -Dsonar.projectKey=hospital-project \
-                        -Dsonar.sources=. \
-                        -Dsonar.host.url=http://20.75.196.235:9000 \
-                        -Dsonar.login=$SONAR_AUTH_TOKEN
-                """
+                    // Inject SonarQube environment variables
+                    withSonarQubeEnv('SonarQube') {
+                        sh """
+                            echo "Running SonarQube analysis..."
+                            ${scannerHome}/bin/sonar-scanner \
+                                -Dsonar.projectKey=hospital-project \
+                                -Dsonar.sources=. \
+                                -Dsonar.host.url=http://20.75.196.235:9000 \
+                                -Dsonar.login=$SONAR_AUTH_TOKEN
+                        """
+                    }
+                }
             }
         }
-    }
-}
 
-
-
-        withSonarQubeEnv(installationName: 'SonarQube') {
-    sh """
-       echo "Running SonarQube analysis..."
-       sonar-scanner \
-          -Dsonar.projectKey=hospital-project \
-          -Dsonar.sources=. \
-          -Dsonar.host.url=http://20.75.196.235:9000 \
-          -Dsonar.login=$SONAR_TOKEN
-    """
-}
+        stage('SonarQube Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
 
         stage('Build & Push Docker Images') {
             steps {
@@ -153,7 +148,7 @@ pipeline {
                             --set image.tag=$BUILD_ID \
                             --set imagePullSecrets[0].name=dockerhub-secret
 
-                        echo "Deploying backend..."
+                        echo "Deploying Backend..."
                         helm upgrade --install patient patient-api/helm \
                             --namespace hospital \
                             -f patient-api/helm/values.yaml \
