@@ -111,7 +111,7 @@ pipeline {
                           --dry-run=client -o yaml | kubectl apply -f -
 
                         echo "Deploying MySQL..."
-                        kubectl apply -f k8s/mysql/mysql-deployment.yaml
+                        kubectl apply -f mysql/deployment.yaml
 
                         echo "Deploying UI..."
                         helm upgrade --install ui ./hpm \
