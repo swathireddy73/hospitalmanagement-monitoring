@@ -20,10 +20,8 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 script {
-                    // Use the SonarScanner installed in Jenkins
                     def scannerHome = tool 'SonarScanner'
 
-                    // Inject SonarQube environment variables
                     withSonarQubeEnv('SonarQube') {
                         sh """
                             echo "Running SonarQube analysis..."
@@ -38,14 +36,6 @@ pipeline {
                 }
             }
         }
-
-        // stage('SonarQube Quality Gate') {
-        //     steps {
-        //         timeout(time: 10, unit: 'MINUTES') {
-        //             waitForQualityGate abortPipeline: true
-        //         }
-        //     }
-        // }
 
         stage('Build & Push Docker Images') {
             steps {
@@ -91,14 +81,21 @@ pipeline {
                             safe_name=\$(echo ${imageName} | tr '/' '_')
                             outfile=trivy_\${safe_name}_${BUILD_ID}.json
 
-                            # Run Trivy, but don't fail the pipeline
-                            trivy image --ignore-unfixed --severity HIGH,CRITICAL --format json -o "\$outfile" ${imageName}:${BUILD_ID} || true
+                            # Run Trivy (ignore errors so pipeline continues)
+                            if command -v trivy >/dev/null 2>&1; then
+                                echo "Using local Trivy binary"
+                                trivy image --ignore-unfixed --severity HIGH,CRITICAL --format json -o "\$outfile" ${imageName}:${BUILD_ID} || true
+                            else
+                                echo "Pulling Trivy Docker image..."
+                                docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":"$PWD" -w "$PWD" aquasec/trivy:latest \
+                                    image --ignore-unfixed --severity HIGH,CRITICAL --format json -o "\$outfile" ${imageName}:${BUILD_ID} || true
+                            fi
 
-                            # Count critical vulnerabilities using Python
+                            # Count CRITICAL vulnerabilities
                             CRITS=\$(python3 - <<PY
 import json
 try:
-    with open("$outfile") as f:
+    with open("\$outfile") as f:
         data = json.load(f)
 except Exception:
     print(0)
@@ -114,7 +111,7 @@ PY
 
                             echo "Critical vulnerabilities: \$CRITS"
                             if [ "\$CRITS" -gt 0 ]; then
-                                echo "Non-blocking study mode: CRITICAL vulnerabilities found (\$CRITS). Continuing the pipeline for study."
+                                echo "Non-blocking study mode: CRITICAL vulnerabilities found (\$CRITS). Continuing the pipeline."
                             fi
                         """
                     }
@@ -188,21 +185,21 @@ PY
                         echo "Deploying MySQL..."
                         kubectl apply -f mysql/deployment.yaml
 
-                        echo "Deploying Backend..."
+                        echo "Deploying Appointment API..."
                         helm upgrade --install appointment appointment-api/helm \
                             --namespace hospital \
                             -f appointment-api/helm/values.yaml \
                             --set image.tag=$BUILD_ID \
                             --set imagePullSecrets[0].name=dockerhub-secret
 
-                        echo "Deploying Backend..."
+                        echo "Deploying Patient API..."
                         helm upgrade --install patient patient-api/helm \
                             --namespace hospital \
                             -f patient-api/helm/values.yaml \
                             --set image.tag=$BUILD_ID \
                             --set imagePullSecrets[0].name=dockerhub-secret
 
-                        echo "Deploying UI..."
+                        echo "Deploying Frontend UI..."
                         helm upgrade --install frontend frontend-api/helm \
                             --namespace hospital \
                             -f frontend-api/helm/values.yaml \
