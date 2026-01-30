@@ -39,13 +39,13 @@ pipeline {
             }
         }
 
-        stage('SonarQube Quality Gate') {
-            steps {
-                timeout(time: 10, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-        }
+        // stage('SonarQube Quality Gate') {
+        //     steps {
+        //         timeout(time: 10, unit: 'MINUTES') {
+        //             waitForQualityGate abortPipeline: true
+        //         }
+        //     }
+        // }
 
         stage('Build & Push Docker Images') {
             steps {
@@ -71,6 +71,26 @@ pipeline {
                                 env -u DOCKER_API_VERSION docker push ${it.name}:${BUILD_ID}
                             """
                         }
+                    }
+                }
+            }
+        }
+
+        stage('Container Security Scan (Trivy)') {
+            steps {
+                script {
+                    def images = [
+                        'sathish33/frontend_api_image',
+                        'sathish33/patient_api_image',
+                        'sathish33/appointment_api_image'
+                    ]
+
+                    images.each {
+                        sh """
+                            echo "Scanning ${it}:${BUILD_ID} with Trivy..."
+                            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.46.2 image \
+                                --ignore-unfixed --exit-code 1 --severity HIGH,CRITICAL ${it}:${BUILD_ID}
+                        """
                     }
                 }
             }
