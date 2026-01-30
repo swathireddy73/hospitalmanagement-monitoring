@@ -18,17 +18,21 @@ pipeline {
         }
 
         stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('SonarQube') {
-                    sh '''
-                        echo "Running SonarQube analysis..."
-                        sonar-scanner \
-                          -Dsonar.projectKey=hospital-project \
-                          -Dsonar.sources=.
-                    '''
-                }
+    steps {
+        script {
+            def scannerHome = tool 'SonarScanner'
+            withSonarQubeEnv('SonarQube') {
+                sh """
+                    echo "Running SonarQube analysis..."
+                    ${scannerHome}/bin/sonar-scanner \
+                      -Dsonar.projectKey=hospital-project \
+                      -Dsonar.sources=.
+                """
             }
         }
+    }
+}
+
 
         stage('SonarQube Quality Gate') {
             steps {
