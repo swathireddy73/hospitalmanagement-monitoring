@@ -102,7 +102,7 @@ else
         aquasec/trivy:latest image --ignore-unfixed --severity HIGH,CRITICAL --format json -o "$outfile" ''' + imageName + ':' + env.BUILD_ID + ''' || true
 fi
 
-CRITS=$(python3 - <<'PY'
+                            CRITS=$(python3 "$outfile" <<'PY'
 import json,sys
 f = sys.argv[1]
 try:
@@ -117,7 +117,7 @@ for res in d.get('Results',[]):
             count += 1
 print(count)
 PY
-"$outfile")
+)
 
 echo "Critical vulnerabilities: $CRITS"
 if [ "$CRITS" -gt 0 ]; then
