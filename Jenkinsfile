@@ -127,7 +127,7 @@ pipeline {
                             --set image.tag=$BUILD_ID \
                             --set imagePullSecrets[0].name=dockerhub-secret
 
-                        eecho "Deploying UI..."
+                        echo "Deploying UI..."
                         helm upgrade --install frontend frontend-api/helm \
                             --namespace hospital \
                             -f frontend-api/helm/values.yaml \
