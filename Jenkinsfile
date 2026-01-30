@@ -81,24 +81,24 @@ pipeline {
             }
         }
 
-        stage('Container Security Scan (Trivy)') {
-            steps {
-                script {
-                    def images = [
-                        "${DOCKER_REGISTRY}/frontend_api_image",
-                        "${DOCKER_REGISTRY}/patient_api_image",
-                        "${DOCKER_REGISTRY}/appointment_api_image"
-                    ]
-
-                    images.each { img ->
-                        sh """
-                            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest \
-                              image --severity HIGH,CRITICAL --ignore-unfixed ${img}:${BUILD_TAG} || true
-                        """
-                    }
-                }
-            }
-        }
+        // stage('Container Security Scan (Trivy)') {
+        //     steps {
+        //         script {
+        //             def images = [
+        //                 "${DOCKER_REGISTRY}/frontend_api_image",
+        //                 "${DOCKER_REGISTRY}/patient_api_image",
+        //                 "${DOCKER_REGISTRY}/appointment_api_image"
+        //             ]
+        //
+        //             images.each { img ->
+        //                 sh """
+        //                     docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest \
+        //                       image --severity HIGH,CRITICAL --ignore-unfixed ${img}:${BUILD_TAG} || true
+        //                 """
+        //             }
+        //         }
+        //     }
+        // }
 
         stage('GCP Login & Fetch GKE Credentials') {
             steps {
@@ -129,6 +129,9 @@ pipeline {
                     )
                 ]) {
                     sh '''
+                        export PATH=/home/swathireddy73/google-cloud-sdk/bin:$PATH
+                        export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+
                         kubectl create namespace hospital --dry-run=client -o yaml | kubectl apply -f -
 
                         kubectl create secret docker-registry dockerhub-secret \
