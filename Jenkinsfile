@@ -85,46 +85,38 @@ pipeline {
                         'sathish33/appointment_api_image'
                     ]
 
-                    images.each {
-                        def imageName = it
-                        sh '''
-echo "Scanning ''' + imageName + ':' + env.BUILD_ID + ''' with Trivy..."
-safe_name=$(echo ''' + imageName + ''' | tr '/' '_')
-outfile=trivy_${safe_name}_''' + env.BUILD_ID + '''.json
+                    images.each { imageName ->
+                        sh """
+                            echo "Scanning ${imageName}:${BUILD_ID} with Trivy..."
+                            safe_name=\$(echo ${imageName} | tr '/' '_')
+                            outfile=trivy_\${safe_name}_${BUILD_ID}.json
 
-if command -v trivy >/dev/null 2>&1; then
-    echo "Found local trivy binary, using it"
-    trivy image --ignore-unfixed --severity HIGH,CRITICAL --format json -o "$outfile" ''' + imageName + ':' + env.BUILD_ID + ''' || true
-else
-    echo "Local trivy not found; pulling and using aquasec/trivy:latest"
-    docker pull aquasec/trivy:latest || true
-    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":"$PWD" -w "$PWD" \
-        aquasec/trivy:latest image --ignore-unfixed --severity HIGH,CRITICAL --format json -o "$outfile" ''' + imageName + ':' + env.BUILD_ID + ''' || true
-fi
+                            # Run Trivy, but don't fail the pipeline
+                            trivy image --ignore-unfixed --severity HIGH,CRITICAL --format json -o "\$outfile" ${imageName}:${BUILD_ID} || true
 
-                            CRITS=$(python3 "$outfile" <<'PY'
-import json,sys
-f = sys.argv[1]
+                            # Count critical vulnerabilities using Python
+                            CRITS=\$(python3 - <<PY
+import json
 try:
-    d = json.load(open(f))
+    with open("$outfile") as f:
+        data = json.load(f)
 except Exception:
     print(0)
-    sys.exit(0)
+    raise SystemExit(0)
 count = 0
-for res in d.get('Results',[]):
-    for v in (res.get('Vulnerabilities') or []):
-        if v.get('Severity') == 'CRITICAL':
+for res in data.get("Results", []):
+    for v in (res.get("Vulnerabilities") or []):
+        if v.get("Severity") == "CRITICAL":
             count += 1
 print(count)
 PY
 )
 
-                            echo "Critical vulnerabilities: $CRITS"
-                            if [ "$CRITS" -gt 0 ]; then
-                                echo "Non-blocking study mode: CRITICAL vulnerabilities found ($CRITS). Continuing the pipeline for study."
-                                # For study purposes we do not fail the build here; to enforce policy, revert this change.
+                            echo "Critical vulnerabilities: \$CRITS"
+                            if [ "\$CRITS" -gt 0 ]; then
+                                echo "Non-blocking study mode: CRITICAL vulnerabilities found (\$CRITS). Continuing the pipeline for study."
                             fi
-'''
+                        """
                     }
                 }
             }
