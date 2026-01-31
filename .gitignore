@@ -4,3 +4,7 @@ google-cloud-sdk-*.tar.gz
 # Terraform
 terraform-import/.terraform/
 .terraform/
+
+# Terraform
+terraform-import/.terraform/
+.terraform/
