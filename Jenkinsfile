@@ -9,61 +9,57 @@ pipeline {
         GKE_REGION       = 'us-central1-a'
         DOCKER_REGISTRY  = 'sathish33'
         BUILD_TAG        = "${BUILD_ID}"
+        USE_GKE_GCLOUD_AUTH_PLUGIN = 'True'
     }
 
     stages {
 
+        stage('Setup gcloud PATH (Bulletproof)') {
+            steps {
+                setupGcloud()
+            }
+        }
+
+        stage('Checkout Code') {
+            steps {
+                checkout scm
+            }
+        }
+
         stage('SonarQube Analysis') {
             steps {
-                sonarScan(
-                    projectKey: 'hospital-project',
-                    sources: 'frontend-api,patient-api,appointment-api',
-                    exclusions: '**/node_modules/**,**/dist/**,**/build/**',
-                    hostUrl: 'http://20.75.196.235:9000',
-                    token: env.SONAR_AUTH_TOKEN
-                )
+                sonarAnalysis()
             }
         }
 
-        stage('Docker Build & Push') {
+        stage('Build & Push Docker Images') {
             steps {
-                dockerBuildPush(
-                    credentialsId: 'sathish33',
-                    tag: BUILD_TAG,
-                    images: [
-                        [dir: 'frontend-api',    name: "${DOCKER_REGISTRY}/frontend_api_image"],
-                        [dir: 'patient-api',     name: "${DOCKER_REGISTRY}/patient_api_image"],
-                        [dir: 'appointment-api', name: "${DOCKER_REGISTRY}/appointment_api_image"]
-                    ]
-                )
+                dockerBuildPush(DOCKER_REGISTRY, BUILD_TAG)
             }
         }
 
-        stage('Trivy Scan') {
+        stage('GCP Login & Fetch GKE Credentials') {
             steps {
-                trivyScan(
-                    tag: BUILD_TAG,
-                    images: [
-                        "${DOCKER_REGISTRY}/frontend_api_image",
-                        "${DOCKER_REGISTRY}/patient_api_image",
-                        "${DOCKER_REGISTRY}/appointment_api_image"
-                    ]
-                )
+                gcpLoginGke(GCP_PROJECT_ID, GKE_CLUSTER_NAME, GKE_REGION)
+            }
+        }
+
+        stage('Terraform: Show Imported GKE Cluster') {
+            steps {
+                terraformShow()
             }
         }
 
         stage('Deploy to GKE') {
             steps {
-                gkeDeploy(
-                    gcpCreds: 'GCP_SERVICE_ACCOUNT_KEY',
-                    dockerCreds: 'sathish33',
-                    projectId: GCP_PROJECT_ID,
-                    cluster: GKE_CLUSTER_NAME,
-                    zone: GKE_REGION,
-                    tag: BUILD_TAG,
-                    gcloudPath: '/home/swathireddy73/google-cloud-sdk/bin'
-                )
+                deployGke(BUILD_TAG)
             }
+        }
+    }
+
+    post {
+        always {
+            sh 'docker system prune -f'
         }
     }
 }
