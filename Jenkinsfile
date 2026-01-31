@@ -12,6 +12,22 @@ pipeline {
 
     stages {
 
+        stage('Terraform Plan - Show Existing GKE') {
+            steps {
+                withCredentials([
+                    file(credentialsId: 'GCP_SERVICE_ACCOUNT_KEY', variable: 'GCP_KEY_FILE')
+                ]) {
+                    sh '''
+                        export GOOGLE_APPLICATION_CREDENTIALS=$GCP_KEY_FILE
+                        cd terraform-import
+                        terraform init -input=false
+                        terraform plan -no-color
+                        terraform output -no-color
+                    '''
+                }
+            }
+        }
+
         stage('Setup gcloud PATH (Bulletproof)') {
             steps {
                 sh '''
