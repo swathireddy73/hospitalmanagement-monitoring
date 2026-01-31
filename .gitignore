@@ -8,3 +8,7 @@ terraform-import/.terraform/
 # Terraform
 terraform-import/.terraform/
 .terraform/
+
+kubectl
+nohup.out
+notes.txt
