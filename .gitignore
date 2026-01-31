@@ -1,14 +1,18 @@
+# Google Cloud SDK
 google-cloud-sdk/
 google-cloud-sdk-*.tar.gz
 
 # Terraform
-terraform-import/.terraform/
 .terraform/
-
-# Terraform
 terraform-import/.terraform/
-.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
 
+# Kubernetes binary
 kubectl
+
+# Logs & misc
 nohup.out
 notes.txt
+current
