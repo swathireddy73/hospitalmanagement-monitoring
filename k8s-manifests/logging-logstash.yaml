@@ -87,16 +87,10 @@ data:
       
     }
     output {
-      # elasticsearch {
-      #   hosts => ["${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}"]
-      #   manage_template => false
-      #   index => "%{[@metadata][beat]}-%{+YYYY.MM.dd}"
-      # }
-      # gelf {
-      #   host => "${GRAYLOG_HOST}"
-      #   port => ${GRAYLOG_PORT}
-      # }
-      stdout {}
+      elasticsearch {
+        hosts => ["elasticsearch.logging.svc.cluster.local:9200"]
+        index => "hospital-logs-%{+YYYY.MM.dd}"
+      }
     }
 ---
 # Source: logstash/templates/headless-svc.yaml
@@ -206,7 +200,7 @@ spec:
       initContainers:
       containers:
         - name: logstash
-          image: docker.io/bitnami/logstash:9.1.2-debian-12-r0
+          image: docker.elastic.co/logstash/logstash:8.11.3
           imagePullPolicy: "IfNotPresent"
           securityContext:
             allowPrivilegeEscalation: false
@@ -214,10 +208,10 @@ spec:
               drop:
               - ALL
             privileged: false
-            readOnlyRootFilesystem: true
-            runAsGroup: 1001
+            readOnlyRootFilesystem: false
+            runAsGroup: 1000
             runAsNonRoot: true
-            runAsUser: 1001
+            runAsUser: 1000
             seLinuxOptions: {}
             seccompProfile:
               type: RuntimeDefault
@@ -270,16 +264,11 @@ spec:
             - name: empty-dir
               mountPath: /tmp
               subPath: tmp-dir
-            - name: empty-dir
-              mountPath: /opt/bitnami/logstash/config
-              subPath: app-conf-dir
-            - name: empty-dir
-              mountPath: /opt/bitnami/logstash/pipeline
-              subPath: app-pipeline-dir
             - name: data
-              mountPath: /bitnami/logstash/data
+              mountPath: /usr/share/logstash/data
             - name: configurations
-              mountPath: /bitnami/logstash/config
+              mountPath: /usr/share/logstash/pipeline/logstash.conf
+              subPath: logstash.conf
       volumes:
         - name: empty-dir
           emptyDir: {}
